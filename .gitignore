@@ -5,3 +5,4 @@ zimmer.sh3d
 info.txt
 .env
 .venv/
+.gitignore
