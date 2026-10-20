@@ -20,30 +20,36 @@ circle_id = None
 pointer_cooldown = 0
 lights = [False, False]
 shutter = False
-click_holddown = 0
+clicked = False
+
+current_color = "red"
 
 debug = False
 
 camera = cv.VideoCapture(0)
+camera.set(cv.CAP_PROP_FRAME_WIDTH, 320)
+camera.set(cv.CAP_PROP_FRAME_HEIGHT, 240)
+camera.set(cv.CAP_PROP_BUFFERSIZE, 1)
 
 mp_hands = mp.solutions.hands
 mp_drawing_styles = mp.solutions.drawing_styles
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
-        model_complexity = 0,
-        min_detection_confidence = 0.5,
-        min_tracking_confidence = 0.5)
+    static_image_mode=False,
+
+    max_num_hands=1,
+    model_complexity=0,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
 
 def update_pointerpos(image):
-    global circle_id, pointer_cooldown, lights, click_holddown, debug, shutter
+    global clicked, circle_id, pointer_cooldown, lights, click_holddown, debug, shutter, current_color
 
     image.flags.writeable = False
     image = cv.cvtColor(image, cv.COLOR_BGR2RGB)
     results = hands.process(image)
-        
-    image.flags.writeable = True
-    image = cv.cvtColor(image, cv.COLOR_RGB2BGR)
-        
+
     if results.multi_hand_landmarks:
         hand_zero = results.multi_hand_landmarks[0]
         index = hand_zero.landmark[8]
@@ -61,81 +67,66 @@ def update_pointerpos(image):
         tx = int(thumb.x * w)
         ty = int(thumb.y * h)
         tz = int(thumb.z * w)
-        cx = int(center_x * w)
-        cy = int(center_y * h)
         
         scrx = int(center_x * screen_width)
         scry = int(center_y * screen_height)
         
+        r = 40
+        hovered_bool = is_hovered(scrx, scry, r)
+        
         dist = math.sqrt((ix-tx)**2+(iy-ty)**2+(iz-tz)**2)
             
-        r = 40
-        if dist <= 30:
 
-            color = (0, 255, 0, 128)
-
-            if click_holddown > 0:
-                click_holddown -= 1
-                pointer_cooldown = 20
-
-            if is_hovered(scrx, scry, r) == "button_Schreibtisch":
-                if click_holddown == 0:
-                    click_holddown = 30
-                if click_holddown == 1:
+        if dist <= 20:
+            color = "green"
+            if clicked == False:
+                if hovered_bool == "button_Schreibtisch":
                     if lights[0] == False:
                         lights[0] = True
                         update_real_light("Schreibtisch", True)
+                        update_bg()
                     else:
                         lights[0] = False
                         update_real_light("Schreibtisch", False)
+                        update_bg()
 
-            if is_hovered(scrx, scry, r) == "button_Bett":
-                if click_holddown == 0:
-                    click_holddown = 30
-                if click_holddown == 1:
+                if hovered_bool == "button_Bett":
                     if lights[1] == False:
                         lights[1] = True
                         update_real_light("Bett", True)
+                        update_bg()
                     else:
                         lights[1] = False
                         update_real_light("Bett", False)
+                        update_bg()
 
-            if is_hovered(scrx, scry, r) == "button_Rollo":
-                            if click_holddown == 0:
-                                click_holddown = 30
-                            if click_holddown == 1:
-                                if shutter == False:
-                                    shutter = update_real_shutter(0.0)
-                                else:
-                                    shutter = update_real_shutter(1.0)
+                if hovered_bool == "button_Rollo":
+                    if shutter == False:
+                        shutter = update_real_shutter(0.0)
+                        update_bg()
+                    else:
+                        shutter = update_real_shutter(1.0)
+                        update_bg()
+                clicked = True
         else:
-            click_holddown = 0
-            if is_hovered(scrx, scry, r) in ["button_Rollo", "button_Bett", "button_Schreibtisch"]:
-                color = (87, 185, 255, 128)
+            clicked = False
+            if hovered_bool in ["button_Rollo", "button_Bett", "button_Schreibtisch"]:
+                color = "blue"
             else:
-                color = (255, 0, 0, 128)
-                    
-        if pointer_cooldown > 0:
-            pointer_cooldown -= 1
+                color = "red"
     
-        if circle_id is None:
-            tk_circle_img = create_pointer(r, color)
-            canvas.image_ref = tk_circle_img
-            circle_id = canvas.create_image(scrx-r, scry-r, image=tk_circle_img, anchor="nw")
-        else:
-            canvas.coords(circle_id, scrx-r, scry-r)   
-            tk_circle_img = create_pointer(r, color)
-            canvas.image_ref = tk_circle_img
-            canvas.itemconfig(circle_id, image=tk_circle_img)
+        canvas.itemconfig(circle_id, state="normal")
+        canvas.coords(circle_id, scrx-r, scry-r)  
+        if current_color != color: 
+            canvas.itemconfig(circle_id, image=tk_circle_img[color])   
+            current_color = color  
+    
+        if debug == True:
+            print("x: " + str(scrx) + ", y:" + str(scry))
+    
     else:
-        tk_circle_img = ImageTk.PhotoImage(Image.new("RGBA", (1, 1), (0, 0, 0, 0)))
-        canvas.image_ref = tk_circle_img
-        canvas.itemconfig(circle_id, image=tk_circle_img)
+        canvas.itemconfig(circle_id, state="hidden")
 
-    if debug == True:
-        print("x: " + str(scrx) + ", y:" + str(scry))
-    
-    update_bg()
     window.after(1, evaluate_camera)
 
 def evaluate_camera():
@@ -144,6 +135,7 @@ def evaluate_camera():
             if not success:
                 print("Empty frame")
             else:
+                image = cv.flip(image, 1)
                 update_pointerpos(image)
 
 def exit_program(e):
@@ -162,11 +154,17 @@ def create_pointer(r, color):
     return ImageTk.PhotoImage(circle_img)
 
 def is_hovered(scrx, scry, r):
-    if scrx in range(1200-r, 1200+r) and scry in range(500-r, 500+r):
+    desk_x = 0.4687 * screen_width
+    desk_y = 0.3472 * screen_height
+    if (desk_x - r <= scrx < desk_x + r) and (desk_y - r <= scry < desk_y + r):
         return "button_Schreibtisch"
-    if scrx in range(1400-r, 1400+r) and scry in range(800-r, 800+r):
+    
+    bed_x = 0.5469 * screen_width
+    bed_y = 0.5556 * screen_height
+    if (bed_x - r <= scrx < bed_x + r) and (bed_y - r <= scry < bed_y + r):
         return "button_Bett"
-    if scrx in range(1100, 1300) and scry in range(700, 1000):
+
+    if (0.4297 * screen_width <= scrx < 0.5078 * screen_width) and (0.4861 * screen_height <= scry < 0.6944 * screen_height):
         return "button_Rollo"
     
 def update_bg():
@@ -288,6 +286,15 @@ bg_id = canvas.create_image(0, 0, image=bg_images[(False, False, False)], anchor
 lights = get_real_light()
 shutter = get_real_shutter()
 update_bg()
+
+
+tk_circle_img = {
+    "red": create_pointer(40, (255, 0, 0, 128)),
+    "green": create_pointer(40, (0, 255, 0, 128)),
+    "blue": create_pointer(40, (87, 185, 255, 128))
+}
+circle_id = canvas.create_image(0, 0, image=tk_circle_img["red"], anchor="nw")
+canvas.itemconfig(circle_id, state = "hidden")
 
 window.mainloop()
 
